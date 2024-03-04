@@ -12,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.schema import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain.chains import RetrievalQA
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 import pickle
 import os
 
@@ -102,7 +103,6 @@ def create_embeddings():
 
 
 
-# Create Embeddings with Text Loader
 @application.route('/create_embeddings2', methods=['POST'])
 def create_embeddings2():
     try:
@@ -119,32 +119,48 @@ def create_embeddings2():
         if not openai_api_key:
             return jsonify({'error': 'OpenAI API key not found.'}), 500
 
-        loader = TextLoader("data/cleaned_constitution_data.txt", encoding='UTF-8')
+        loader = TextLoader("data/CasesTextual.txt", encoding='UTF-8')
+        # print(len(loader))
         documents = loader.load()
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-        docs = text_splitter.split_documents(documents)
-        
-        embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-        print(embeddings)
-        
-        db = FAISS.from_documents(docs, embeddings)
-        print(db)
+        print("Total documents:", len(documents))
 
+        # Split documents into chunks of 7,000 lines each
+        chunk_size = 3500
+        for i in range(0, len(documents), chunk_size):
+            print(chunk_size)
+            chunk_documents = documents[i:i+chunk_size]
+            print(len(documents))
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3500, chunk_overlap=0, separators=[" ", ",", "\n"])
+            docs = text_splitter.split_documents(chunk_documents)
+            print("Processing chunk", i, "with", len(docs), "documents")
+            
+            embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
+            print(embeddings)
+            
+            db = FAISS.from_documents(docs, embeddings)
+            print(db)
 
-        query = "When was abandoned properties management act?"
-        docs = db.similarity_search(query)
+            # Serialize the new embeddings
+            new_embeddings = db.serialize_to_bytes()
+            print("New embeddings size:", len(new_embeddings))
+            # print("New Embeddings::",new_embeddings)
 
-        print(docs[0].page_content)
-        # Extract and serialize embeddings only
-        # embeddings_data = [item.embedding for item in db]
+            # Load existing embeddings or create an empty list if the file doesn't exist
+            if os.path.exists('embeddings12.pkl'):
+                with open('embeddings12.pkl', 'wb') as f:
+                    existing_embeddings = pickle.load(f)
+            else:
+                existing_embeddings = []
 
-        pkl = db.serialize_to_bytes()  # serializes the faiss
-        # embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+            # Append new embeddings to existing embeddings
+            combined_embeddings = new_embeddings
+            print("Combined embeddings size:", len(combined_embeddings))
+            # print("Combined Embeddings::",combined_embeddings)
 
-
-        # Save embeddings to a pickle file
-        with open('embeddings2.pkl', 'wb') as f:
-            pickle.dump(pkl, f)
+            # Save the combined embeddings to the pickle file
+            with open('embeddings12.pkl', 'wb') as f:
+                pickle.dump(combined_embeddings, f)
+            print("Embeddings saved successfully")
 
         return jsonify({'message': 'Embeddings created and saved successfully.'}), 200
 
@@ -304,6 +320,7 @@ def retrieval_answer():
 
         embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
 
+        print("I am here.")
         # Deserialize FAISS index from bytes
         db = FAISS.deserialize_from_bytes(embeddings=embeddings, serialized=serialized_faiss_index)
 
@@ -340,4 +357,4 @@ def retrieval_answer():
 
 # Run the Flask application
 if __name__ == '__main__':
-    application.run()
+    application.run(debug=True)
